@@ -6,4 +6,5 @@ type Menu struct {
 	HargaMenu 	  string `json:"harga_menu"`
 	Kategori      string `json:"kategori"`
 	Deskripsi     string `json:"deskripsi"`
+	Foto_Menu     string `json:"foto_menu"`
 }

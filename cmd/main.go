@@ -45,6 +45,7 @@ func main() {
 
 	r.HandleFunc("/login", api.LoginHandler)
 	r.HandleFunc("/upload-foto-profile", api.UploadFotoProfileHandler).Methods("POST")
+	r.HandleFunc("/upload-foto-menu", api.UploadFotoMenuHandler).Methods("POST")
 
 
 	// Menambahkan CORS middleware

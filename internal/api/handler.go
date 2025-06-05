@@ -174,7 +174,7 @@ func GetMenuHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer database.Close()
 
-	rows, err := database.Query("SELECT id_menu, nama_menu, harga_menu, kategori, deskripsi FROM menu")
+	rows, err := database.Query("SELECT id_menu, nama_menu, harga_menu, kategori, deskripsi, COALESCE(foto_menu, '') FROM menu")
 	if err != nil {
 		http.Error(w, "Error querying database", http.StatusInternalServerError)
 		return
@@ -184,7 +184,7 @@ func GetMenuHandler(w http.ResponseWriter, r *http.Request) {
 	var menus []models.Menu
 	for rows.Next() {
 		var menu models.Menu
-		if err := rows.Scan(&menu.IDMenu, &menu.NamaMenu, &menu.HargaMenu, &menu.Kategori, &menu.Deskripsi); err != nil {
+		if err := rows.Scan(&menu.IDMenu, &menu.NamaMenu, &menu.HargaMenu, &menu.Kategori, &menu.Deskripsi, &menu.Foto_Menu); err != nil {
 			log.Println("Error scanning row:", err)
 			continue
 		}
@@ -200,7 +200,6 @@ func GetMenuHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(menus)
 }
 
-// CreateMenuHandler - Menambahkan data menu baru
 func CreateMenuHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -223,18 +222,31 @@ func CreateMenuHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "INSERT INTO menu (nama_menu, harga_menu, kategori, deskripsi) VALUES ($1, $2, $3, $4)"
-	_, err = database.Exec(query, menu.NamaMenu, menu.HargaMenu, menu.Kategori, menu.Deskripsi)
+	// Query dengan RETURNING untuk mendapatkan id_menu yang baru dibuat
+	query := `
+		INSERT INTO menu (nama_menu, harga_menu, kategori, deskripsi, foto_menu)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id_menu
+	`
+
+	var idMenu int
+	err = database.QueryRow(query, menu.NamaMenu, menu.HargaMenu, menu.Kategori, menu.Deskripsi, menu.Foto_Menu).Scan(&idMenu)
 	if err != nil {
 		log.Println("Insert error:", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Gagal menyimpan menu", http.StatusInternalServerError)
 		return
 	}
 
-	log.Println("Menu berhasil ditambahkan:", menu)
-	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("Menu berhasil ditambahkan"))
+	// Kirim response JSON lengkap
+	response := map[string]interface{}{
+		"message": "Menu berhasil ditambahkan",
+		"id_menu": idMenu,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
+
 
 // UpdateMenuHandler - Mengupdate data menu berdasarkan ID
 func UpdateMenuHandler(w http.ResponseWriter, r *http.Request) {
@@ -254,8 +266,8 @@ func UpdateMenuHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = database.Exec(
-		"UPDATE menu SET nama_menu=$1, harga_menu=$2, kategori=$3, deskripsi=$4 WHERE id_menu=$5",
-		menu.NamaMenu, menu.HargaMenu, menu.Kategori, menu.Deskripsi, id,
+		"UPDATE menu SET nama_menu=$1, harga_menu=$2, kategori=$3, deskripsi=$4, foto_menu=$5 WHERE id_menu=$6",
+		menu.NamaMenu, menu.HargaMenu, menu.Kategori, menu.Deskripsi, menu.Foto_Menu, id,
 	)
 	if err != nil {
 		http.Error(w, "Error updating data in the database", http.StatusInternalServerError)
@@ -320,8 +332,8 @@ func GetMenuByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Query untuk mendapatkan data menu berdasarkan ID
 	var menu models.Menu
-	err = database.QueryRow("SELECT id_menu, nama_menu, harga_menu, kategori, deskripsi FROM menu WHERE id_menu=$1", id).
-		Scan(&menu.IDMenu, &menu.NamaMenu, &menu.HargaMenu, &menu.Kategori, &menu.Deskripsi)
+	err = database.QueryRow("SELECT id_menu, nama_menu, harga_menu, kategori, deskripsi, COALESCE(foto_menu, '') FROM menu WHERE id_menu=$1", id).
+		Scan(&menu.IDMenu, &menu.NamaMenu, &menu.HargaMenu, &menu.Kategori, &menu.Deskripsi, &menu.Foto_Menu)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, "Menu not found", http.StatusNotFound)
@@ -860,6 +872,7 @@ func UpdateStatusPemesanan(w http.ResponseWriter, r *http.Request) {
 const (
 	bucketName  = "kupliqcafe-profile"
 	s3Folder    = "profile/"
+	s3Menu		= "menu/"
 )
 
 func UploadFotoProfileHandler(w http.ResponseWriter, r *http.Request) {
@@ -945,6 +958,74 @@ func UploadFotoProfileHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("Response sent to client")
 
 }
+
+func UploadFotoMenuHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("Start upload menu handler")
+
+	err := r.ParseMultipartForm(10 << 20) // 10MB
+	if err != nil {
+		http.Error(w, "Gagal parsing form", http.StatusBadRequest)
+		return
+	}
+
+	file, handler, err := r.FormFile("foto")
+	if err != nil {
+		http.Error(w, "File tidak ditemukan", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	id := r.FormValue("id_menu")
+	if id == "" {
+		http.Error(w, "id_menu diperlukan", http.StatusBadRequest)
+		return
+	}
+
+	fileExt := filepath.Ext(handler.Filename)
+	fileName := fmt.Sprintf("menu_%s_%d%s", id, time.Now().Unix(), fileExt)
+	s3Key := s3Menu + fileName
+
+	// Deteksi content-type
+	buffer := make([]byte, 512)
+	file.Read(buffer)
+	contentType := http.DetectContentType(buffer)
+	file.Seek(0, io.SeekStart)
+
+	_, err = config.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String(s3Key),
+		Body:        file,
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		log.Println("Upload ke S3 gagal:", err)
+		http.Error(w, "Gagal upload ke S3", http.StatusInternalServerError)
+		return
+	}
+
+	// Simpan URL ke DB
+	s3URL := fmt.Sprintf("https://%s.s3.ap-southeast-3.amazonaws.com/%s", bucketName, s3Key)
+	database, err := db.ConnectToDB()
+	if err != nil {
+		http.Error(w, "DB error", http.StatusInternalServerError)
+		return
+	}
+	defer database.Close()
+
+	_, err = database.Exec("UPDATE menu SET foto_menu = $1 WHERE id_menu = $2", s3URL, id)
+	if err != nil {
+		http.Error(w, "Gagal update DB", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Foto menu berhasil diupload",
+		"url":     s3URL,
+	})
+}
+
+
 
 
 
