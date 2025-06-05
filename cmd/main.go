@@ -6,15 +6,19 @@ import (
 	"backend-kupliq/internal/api"  // Pastikan path impor sesuai dengan folder proyek kamu
 	"github.com/rs/cors"
 	"github.com/gorilla/mux"
+	"backend-kupliq/config"
 )
 
 func main() {
+	config.InitS3()
 	// Membuat router
 	r := mux.NewRouter()
 
 	// Menangani route untuk /guru/{id}
 	r.HandleFunc("/costumer", api.GetCostumerHandler).Methods("GET")
 	r.HandleFunc("/costumer/{id}", api.GetCostumerByIDHandler).Methods("GET")
+	r.HandleFunc("/costumer", api.CreateCostumerHandler).Methods("POST")
+	r.HandleFunc("/costumer/{id}", api.UpdateCostumerHandler).Methods("PUT")
 
 
 	r.HandleFunc("/menu", api.GetMenuHandler).Methods("GET")
@@ -40,6 +44,7 @@ func main() {
 
 
 	r.HandleFunc("/login", api.LoginHandler)
+	r.HandleFunc("/upload-foto-profile", api.UploadFotoProfileHandler).Methods("POST")
 
 
 	// Menambahkan CORS middleware

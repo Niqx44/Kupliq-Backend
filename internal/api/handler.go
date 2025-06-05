@@ -10,6 +10,13 @@ import (
 	"database/sql"
 	"github.com/gorilla/mux"
 	"strconv"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"context"
+	"time"
+	"path/filepath"
+	"backend-kupliq/config"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"io"
 )
 
 type LoginRequest struct {
@@ -33,7 +40,7 @@ func GetCostumerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer database.Close()
 
-	rows, err := database.Query("SELECT id_costumer, nama_costumer, password, email, id_role FROM costumer")
+	rows, err := database.Query("SELECT id_costumer, nama_costumer, password, email, notelp_costumer, id_role, COALESCE(foto_profile, '') FROM costumer")
 	if err != nil {
 		http.Error(w, "Error querying database", http.StatusInternalServerError)
 		return
@@ -43,7 +50,7 @@ func GetCostumerHandler(w http.ResponseWriter, r *http.Request) {
 	var costumers []models.Costumer
 	for rows.Next() {
 		var costumer models.Costumer
-		if err := rows.Scan(&costumer.IDCostumer, &costumer.NamaCostumer, &costumer.Password, &costumer.Email, &costumer.IDRole); err != nil {
+		if err := rows.Scan(&costumer.IDCostumer, &costumer.NamaCostumer, &costumer.Password, &costumer.Email, &costumer.NoTelp, &costumer.IDRole, &costumer.Foto_Profile); err != nil {
 			log.Println("Error scanning row:", err)
 			continue
 		}
@@ -74,11 +81,11 @@ func GetCostumerByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Query untuk mendapatkan data costumer berdasarkan ID
 	var costumer models.Costumer
-	err = database.QueryRow("SELECT id_costumer, nama_costumer, password, email, id_role FROM costumer WHERE id_costumer=$1", id).
-		Scan(&costumer.IDCostumer, &costumer.NamaCostumer, &costumer.Password, &costumer.Email, &costumer.IDRole)
+	err = database.QueryRow("SELECT id_costumer, nama_costumer, password, email, notelp_costumer,id_role, COALESCE(foto_profile, '') FROM costumer WHERE id_costumer=$1", id).
+		Scan(&costumer.IDCostumer, &costumer.NamaCostumer, &costumer.Password, &costumer.Email, &costumer.NoTelp, &costumer.IDRole, &costumer.Foto_Profile)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Guru not found", http.StatusNotFound)
+			http.Error(w, "Costumer not found", http.StatusNotFound)
 		} else {
 			http.Error(w, "Error querying database", http.StatusInternalServerError)
 		}
@@ -87,6 +94,74 @@ func GetCostumerByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Mengirimkan data costumer dalam format JSON
 	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(costumer)
+}
+
+// CreateCostumerHandler - Menambahkan data costumer baru
+func CreateCostumerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	database, err := db.ConnectToDB()
+	if err != nil {
+		log.Println("DB connect error:", err)
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	defer database.Close()
+
+	var costumer models.Costumer
+	err = json.NewDecoder(r.Body).Decode(&costumer)
+	if err != nil {
+		log.Println("JSON decode error:", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	costumer.IDRole = "2"
+
+	query := "INSERT INTO costumer (nama_costumer, password, email, notelp_costumer, id_role) VALUES ($1, $2, $3, $4, $5)"
+	_, err = database.Exec(query, costumer.NamaCostumer, costumer.Password, costumer.Email, costumer.NoTelp, costumer.IDRole)
+	if err != nil {
+		log.Println("Insert error:", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Println("Data Costumer berhasil ditambahkan:", costumer)
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte("Data Costumer berhasil ditambahkan"))
+}
+
+// UpdateCostumerHandler - Mengupdate data menu berdasarkan ID
+func UpdateCostumerHandler(w http.ResponseWriter, r *http.Request) {
+	database, err := db.ConnectToDB()
+	if err != nil {
+		http.Error(w, "Error connecting to the database", http.StatusInternalServerError)
+		return
+	}
+	defer database.Close()
+
+	id := mux.Vars(r)["id"]
+
+	var costumer models.Costumer
+	if err := json.NewDecoder(r.Body).Decode(&costumer); err != nil {
+		http.Error(w, "Error parsing request body", http.StatusBadRequest)
+		return
+	}
+
+	_, err = database.Exec(
+		"UPDATE costumer SET nama_costumer=$1, password=$2, email=$3, notelp_costumer=$4, id_role=$5, foto_profile=$6 WHERE id_costumer=$7",
+		costumer.NamaCostumer, costumer.Password, costumer.Email, costumer.NoTelp, costumer.IDRole, costumer.Foto_Profile, id,
+	)
+	if err != nil {
+		http.Error(w, "Error updating data in the database", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(costumer)
 }
 
@@ -395,8 +470,10 @@ func CreateReservasiHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "INSERT INTO reservasi (id_costumer, tanggal_reservasi, waktu_reservasi, keterangan) VALUES ($1, $2, $3, $4)"
-	_, err = database.Exec(query, reservasi.IDCustomer, reservasi.TanggalReservasi, reservasi.WaktuReservasi, reservasi.Keterangan)
+	reservasi.Status = "Pending"
+
+	query := "INSERT INTO reservasi (id_costumer, tanggal_reservasi, waktu_reservasi, keterangan, status) VALUES ($1, $2, $3, $4, $5)"
+	_, err = database.Exec(query, reservasi.IDCustomer, reservasi.TanggalReservasi, reservasi.WaktuReservasi, reservasi.Keterangan, reservasi.Status)
 	if err != nil {
 		log.Println("Insert error:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -594,10 +671,12 @@ func GetPemesananByCustomerID(w http.ResponseWriter, r *http.Request) {
     query := `
         SELECT 
             p.id_pemesanan, p.id_costumer, p.id_meja, p.total_harga, p.tanggal_pemesanan, p.status,
-            d.id_menu, m.nama_menu, d.jumlah, d.sub_total
+            d.id_menu, m.nama_menu, d.jumlah, d.sub_total,
+            bayar.metode_pembayaran
         FROM pemesanan p
         JOIN detailpemesanan d ON p.id_pemesanan = d.id_pemesanan
         JOIN menu m ON d.id_menu = m.id_menu
+        LEFT JOIN pembayaran bayar ON bayar.id_pemesanan = p.id_pemesanan
         WHERE p.id_costumer = $1
         ORDER BY p.id_pemesanan DESC;
     `
@@ -615,12 +694,13 @@ func GetPemesananByCustomerID(w http.ResponseWriter, r *http.Request) {
         var (
             idPemesanan, idCustomer, idMeja int
             totalHarga, subTotal            float64
-			tanggal, namaMenu, status       string
+            tanggal, namaMenu, status       string
             idMenu, jumlah                  int
+            metodePembayaran                *string // pointer agar bisa null
         )
 
         err := rows.Scan(&idPemesanan, &idCustomer, &idMeja, &totalHarga, &tanggal, &status,
-            &idMenu, &namaMenu, &jumlah, &subTotal)
+            &idMenu, &namaMenu, &jumlah, &subTotal, &metodePembayaran)
         if err != nil {
             log.Println("Scan error:", err)
             continue
@@ -628,13 +708,18 @@ func GetPemesananByCustomerID(w http.ResponseWriter, r *http.Request) {
 
         if _, exists := orderMap[idPemesanan]; !exists {
             orderMap[idPemesanan] = &models.Order{
-                IDPemesanan: idPemesanan,
-                IDCustomer:  idCustomer,
-                IDMeja:      idMeja,
-                TotalHarga:  totalHarga,
-                TanggalPemesanan:     tanggal,
-				Status:      status,
-                Items:       []models.Item{},
+                IDPemesanan:       idPemesanan,
+                IDCustomer:        idCustomer,
+                IDMeja:            idMeja,
+                TotalHarga:        totalHarga,
+                TanggalPemesanan:  tanggal,
+                Status:            status,
+                MetodePembayaran:  "", // default
+                Items:             []models.Item{},
+            }
+
+            if metodePembayaran != nil {
+                orderMap[idPemesanan].MetodePembayaran = *metodePembayaran
             }
         }
 
@@ -656,6 +741,7 @@ func GetPemesananByCustomerID(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(result)
 }
+
 
 func GetAllPemesananHandler(w http.ResponseWriter, r *http.Request) {
     dbConn, err := db.ConnectToDB()
@@ -769,6 +855,97 @@ func UpdateStatusPemesanan(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Status berhasil diubah"))
 }
+
+
+const (
+	bucketName  = "kupliqcafe-profile"
+	s3Folder    = "profile/"
+)
+
+func UploadFotoProfileHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("Start upload handler")
+	r.ParseMultipartForm(10 << 20) // 10 MB
+
+	file, handler, err := r.FormFile("foto")
+	if err != nil {
+		log.Printf("FormFile error: %v", err)
+		http.Error(w, "File not found in request", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	id := r.FormValue("id_costumer")
+	if id == "" {
+		log.Println("id_costumer is missing")
+		http.Error(w, "id_costumer is required", http.StatusBadRequest)
+		return
+	}
+	log.Println("File uploaded:", handler.Filename)
+
+	fileExt := filepath.Ext(handler.Filename)
+	fileName := fmt.Sprintf("profile_%s_%d%s", id, time.Now().Unix(), fileExt)
+	s3Key := s3Folder + fileName
+
+	// Baca sebagian isi file untuk deteksi tipe
+	buffer := make([]byte, 512)
+	_, err = file.Read(buffer)
+	if err != nil {
+		log.Printf("Read buffer error: %v", err)
+		http.Error(w, "Failed to read file buffer", http.StatusInternalServerError)
+		return
+	}
+	contentType := http.DetectContentType(buffer)
+	// Reset posisi baca file
+	file.Seek(0, io.SeekStart)
+
+	log.Println("Detected content type:", contentType)
+	log.Println("Uploading to S3:", s3Key)
+
+	// Upload ke S3
+	_, err = config.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String(s3Key),
+		Body:        file,
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		log.Printf("S3 upload error: %v", err)
+		http.Error(w, "Failed to upload to S3", http.StatusInternalServerError)
+		return
+	}
+
+	log.Println("S3 upload success")
+
+	s3URL := fmt.Sprintf("https://%s.s3.ap-southeast-3.amazonaws.com/%s", bucketName, s3Key)
+
+	// Update database
+	database, err := db.ConnectToDB()
+	if err != nil {
+		log.Printf("DB connect error: %v", err)
+		http.Error(w, "DB connection failed", http.StatusInternalServerError)
+		return
+	}
+	defer database.Close()
+
+	_, err = database.Exec("UPDATE costumer SET foto_profile = $1 WHERE id_costumer = $2", s3URL, id)
+	if err != nil {
+		log.Printf("DB update error: %v", err)
+		http.Error(w, "Failed to update database", http.StatusInternalServerError)
+		return
+	}
+	log.Println("DB update success")
+
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Foto berhasil diunggah",
+		"url":     s3URL,
+	})
+	log.Println("Response sent to client")
+
+}
+
 
 
 

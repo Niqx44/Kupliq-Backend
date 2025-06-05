@@ -7,5 +7,6 @@ type Order struct {
 	TotalHarga  float64 `json:"total_harga"`
 	TanggalPemesanan     string  `json:"tanggal_pemesanan"`
 	Status      string  `json:"status"`
+	MetodePembayaran  string  `json:"metode_pembayaran"`
 	Items       []Item  `json:"items"`
 }
