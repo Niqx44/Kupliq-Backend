@@ -437,7 +437,7 @@ func GetReservasiByIDcustomer(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dbConn.Close()
 
-	rows, err := dbConn.Query("SELECT r.id_reservasi, r.id_costumer, r.tanggal_reservasi, r.waktu_reservasi, r.keterangan, r.status, c.nama_costumer, c.notelp_costumer FROM reservasi r JOIN costumer c ON r.id_costumer = c.id_costumer WHERE r.id_costumer = $1", idCustomer)
+	rows, err := dbConn.Query("SELECT r.id_reservasi, r.id_costumer, r.tanggal_reservasi, r.waktu_reservasi, r.keterangan, r.status, c.nama_costumer FROM reservasi r JOIN costumer c ON r.id_costumer = c.id_costumer WHERE r.id_costumer = $1", idCustomer)
 	if err != nil {
 		log.Println("Query error:", err)
 		http.Error(w, "Query error", http.StatusInternalServerError)
