@@ -10,8 +10,8 @@ import (
 
 // Konfigurasi database
 const (
-	DbUser     = "dzaki"   // Ganti dengan username PostgreSQL kamu
-	DbPassword = "password"        // Ganti dengan password PostgreSQL kamu
+	DbUser     = "postgres"   // Ganti dengan username PostgreSQL kamu
+	DbPassword = "123"        // Ganti dengan password PostgreSQL kamu
 	DbName     = "kupliqcafe" // Ganti dengan nama database PostgreSQL kamu
 )
 

@@ -1,22 +1,23 @@
 package api
 
 import (
-	"net/http"
+	"backend-kupliq/config"
 	"backend-kupliq/internal/db"
 	"backend-kupliq/internal/models"
-	"log"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
-	"database/sql"
-	"github.com/gorilla/mux"
-	"strconv"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"context"
-	"time"
-	"path/filepath"
-	"backend-kupliq/config"
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"io"
+	"log"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/gorilla/mux"
 )
 
 type LoginRequest struct {
@@ -30,7 +31,6 @@ type User struct {
 	Role  string `json:"role"`
 }
 
-
 // GetCostumerHandler - Mendapatkan semua data costumer
 func GetCostumerHandler(w http.ResponseWriter, r *http.Request) {
 	database, err := db.ConnectToDB()
@@ -42,7 +42,8 @@ func GetCostumerHandler(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := database.Query("SELECT id_costumer, nama_costumer, password, email, notelp_costumer, id_role, COALESCE(foto_profile, '') FROM costumer")
 	if err != nil {
-		http.Error(w, "Error querying database", http.StatusInternalServerError)
+		log.Println("Query database error:", err)                  // <--- ini penting
+		http.Error(w, err.Error(), http.StatusInternalServerError) // balikin pesan asli
 		return
 	}
 	defer rows.Close()
@@ -247,7 +248,6 @@ func CreateMenuHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-
 // UpdateMenuHandler - Mengupdate data menu berdasarkan ID
 func UpdateMenuHandler(w http.ResponseWriter, r *http.Request) {
 	database, err := db.ConnectToDB()
@@ -420,43 +420,43 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 // Handler
 func GetReservasiByIDcustomer(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    idCustomerStr := vars["id_costumer"]
-    log.Println("id_customer dari URL:", idCustomerStr) // debug log
+	vars := mux.Vars(r)
+	idCustomerStr := vars["id_costumer"]
+	log.Println("id_customer dari URL:", idCustomerStr) // debug log
 
-    idCustomer, err := strconv.Atoi(idCustomerStr)
-    if err != nil {
-        http.Error(w, "id_customer harus berupa angka", http.StatusBadRequest)
-        return
-    }
+	idCustomer, err := strconv.Atoi(idCustomerStr)
+	if err != nil {
+		http.Error(w, "id_customer harus berupa angka", http.StatusBadRequest)
+		return
+	}
 
-    dbConn, err := db.ConnectToDB()
-    if err != nil {
-        http.Error(w, "Gagal konek database", http.StatusInternalServerError)
-        return
-    }
-    defer dbConn.Close()
+	dbConn, err := db.ConnectToDB()
+	if err != nil {
+		http.Error(w, "Gagal konek database", http.StatusInternalServerError)
+		return
+	}
+	defer dbConn.Close()
 
-    rows, err := dbConn.Query("SELECT id_reservasi, id_costumer, tanggal_reservasi, waktu_reservasi, keterangan, status FROM reservasi WHERE id_costumer = $1", idCustomer)
-    if err != nil {
-        log.Println("Query error:", err)
-        http.Error(w, "Query error", http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	rows, err := dbConn.Query("SELECT r.id_reservasi, r.id_costumer, r.tanggal_reservasi, r.waktu_reservasi, r.keterangan, r.status, c.nama_costumer, c.notelp_costumer FROM reservasi r JOIN costumer c ON r.id_costumer = c.id_costumer WHERE r.id_costumer = $1", idCustomer)
+	if err != nil {
+		log.Println("Query error:", err)
+		http.Error(w, "Query error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
-    var reservasiList []models.Reservasi
-    for rows.Next() {
-        var k models.Reservasi
-        if err := rows.Scan(&k.IDReservasi, &k.IDCustomer, &k.TanggalReservasi, &k.WaktuReservasi, &k.Keterangan, &k.Status); err != nil {
-            log.Println("Scan error:", err)
-            continue
-        }
-        reservasiList = append(reservasiList, k)
-    }
+	var reservasiList []models.Reservasi
+	for rows.Next() {
+		var k models.Reservasi
+		if err := rows.Scan(&k.IDReservasi, &k.IDCustomer, &k.TanggalReservasi, &k.WaktuReservasi, &k.Keterangan, &k.Status, &k.NamaCostumer); err != nil {
+			log.Println("Scan error:", err)
+			continue
+		}
+		reservasiList = append(reservasiList, k)
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(reservasiList)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(reservasiList)
 }
 
 // CreateReservasiHandler - Menambahkan data guru baru
@@ -506,7 +506,7 @@ func GetReservasiHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer database.Close()
 
-	rows, err := database.Query("SELECT id_reservasi, id_costumer, tanggal_reservasi, waktu_reservasi, keterangan, status FROM reservasi")
+	rows, err := database.Query("SELECT r.id_reservasi, r.id_costumer, r.tanggal_reservasi, r.waktu_reservasi, r.keterangan, r.status, c.nama_costumer, c.notelp_costumer FROM reservasi r JOIN costumer c ON r.id_costumer = c.id_costumer")
 	if err != nil {
 		http.Error(w, "Error querying database", http.StatusInternalServerError)
 		return
@@ -516,7 +516,7 @@ func GetReservasiHandler(w http.ResponseWriter, r *http.Request) {
 	var reservasis []models.Reservasi
 	for rows.Next() {
 		var reservasi models.Reservasi
-		if err := rows.Scan(&reservasi.IDReservasi, &reservasi.IDCustomer, &reservasi.TanggalReservasi, &reservasi.WaktuReservasi, &reservasi.Keterangan, &reservasi.Status); err != nil {
+		if err := rows.Scan(&reservasi.IDReservasi, &reservasi.IDCustomer, &reservasi.TanggalReservasi, &reservasi.WaktuReservasi, &reservasi.Keterangan, &reservasi.Status, &reservasi.NamaCostumer, &reservasi.NoTelpCostumer); err != nil {
 			log.Println("Error scanning row:", err)
 			continue
 		}
@@ -547,8 +547,8 @@ func GetReservasiByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Query untuk mendapatkan data menu berdasarkan ID
 	var reservasi models.Reservasi
-	err = database.QueryRow("SELECT id_reservasi, id_costumer, tanggal_reservasi, waktu_reservasi, keterangan, status FROM reservasi WHERE id_reservasi=$1", id).
-		Scan(&reservasi.IDReservasi, &reservasi.IDCustomer, &reservasi.TanggalReservasi, &reservasi.WaktuReservasi, &reservasi.Keterangan, &reservasi.Status)
+	err = database.QueryRow("SELECT r.id_reservasi, r.id_costumer, r.tanggal_reservasi, r.waktu_reservasi, r.keterangan, r.status, c.nama_costumer, c.notelp_costumer FROM reservasi r JOIN costumer c ON r.id_costumer = c.id_costumer WHERE r.id_reservasi=$1", id).
+		Scan(&reservasi.IDReservasi, &reservasi.IDCustomer, &reservasi.TanggalReservasi, &reservasi.WaktuReservasi, &reservasi.Keterangan, &reservasi.Status, &reservasi.NamaCostumer, &reservasi.NoTelpCostumer)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, "Reservasi not found", http.StatusNotFound)
@@ -595,8 +595,6 @@ func UpdateReservasiStatusHandler(w http.ResponseWriter, r *http.Request) {
 		"message": "Status reservasi berhasil diperbarui",
 	})
 }
-
-
 
 func BuatPemesananHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -663,24 +661,24 @@ func BuatPemesananHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetPemesananByCustomerID(w http.ResponseWriter, r *http.Request) {
-    vars := mux.Vars(r)
-    idCustomerStr := vars["id_costumer"]
-    log.Println("id_costumer dari URL:", idCustomerStr)
+	vars := mux.Vars(r)
+	idCustomerStr := vars["id_costumer"]
+	log.Println("id_costumer dari URL:", idCustomerStr)
 
-    idCustomer, err := strconv.Atoi(idCustomerStr)
-    if err != nil {
-        http.Error(w, "id_costumer harus berupa angka", http.StatusBadRequest)
-        return
-    }
+	idCustomer, err := strconv.Atoi(idCustomerStr)
+	if err != nil {
+		http.Error(w, "id_costumer harus berupa angka", http.StatusBadRequest)
+		return
+	}
 
-    dbConn, err := db.ConnectToDB()
-    if err != nil {
-        http.Error(w, "Gagal konek database", http.StatusInternalServerError)
-        return
-    }
-    defer dbConn.Close()
+	dbConn, err := db.ConnectToDB()
+	if err != nil {
+		http.Error(w, "Gagal konek database", http.StatusInternalServerError)
+		return
+	}
+	defer dbConn.Close()
 
-    query := `
+	query := `
         SELECT 
             p.id_pemesanan, p.id_costumer, p.id_meja, p.total_harga, p.tanggal_pemesanan, p.status,
             d.id_menu, m.nama_menu, d.jumlah, d.sub_total,
@@ -692,78 +690,77 @@ func GetPemesananByCustomerID(w http.ResponseWriter, r *http.Request) {
         WHERE p.id_costumer = $1
         ORDER BY p.id_pemesanan DESC;
     `
-    rows, err := dbConn.Query(query, idCustomer)
-    if err != nil {
-        log.Println("Query error:", err)
-        http.Error(w, "Query error", http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	rows, err := dbConn.Query(query, idCustomer)
+	if err != nil {
+		log.Println("Query error:", err)
+		http.Error(w, "Query error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
-    orderMap := make(map[int]*models.Order)
+	orderMap := make(map[int]*models.Order)
 
-    for rows.Next() {
-        var (
-            idPemesanan, idCustomer, idMeja int
-            totalHarga, subTotal            float64
-            tanggal, namaMenu, status       string
-            idMenu, jumlah                  int
-            metodePembayaran                *string // pointer agar bisa null
-        )
+	for rows.Next() {
+		var (
+			idPemesanan, idCustomer, idMeja int
+			totalHarga, subTotal            float64
+			tanggal, namaMenu, status       string
+			idMenu, jumlah                  int
+			metodePembayaran                *string // pointer agar bisa null
+		)
 
-        err := rows.Scan(&idPemesanan, &idCustomer, &idMeja, &totalHarga, &tanggal, &status,
-            &idMenu, &namaMenu, &jumlah, &subTotal, &metodePembayaran)
-        if err != nil {
-            log.Println("Scan error:", err)
-            continue
-        }
+		err := rows.Scan(&idPemesanan, &idCustomer, &idMeja, &totalHarga, &tanggal, &status,
+			&idMenu, &namaMenu, &jumlah, &subTotal, &metodePembayaran)
+		if err != nil {
+			log.Println("Scan error:", err)
+			continue
+		}
 
-        if _, exists := orderMap[idPemesanan]; !exists {
-            orderMap[idPemesanan] = &models.Order{
-                IDPemesanan:       idPemesanan,
-                IDCustomer:        idCustomer,
-                IDMeja:            idMeja,
-                TotalHarga:        totalHarga,
-                TanggalPemesanan:  tanggal,
-                Status:            status,
-                MetodePembayaran:  "", // default
-                Items:             []models.Item{},
-            }
+		if _, exists := orderMap[idPemesanan]; !exists {
+			orderMap[idPemesanan] = &models.Order{
+				IDPemesanan:      idPemesanan,
+				IDCustomer:       idCustomer,
+				IDMeja:           idMeja,
+				TotalHarga:       totalHarga,
+				TanggalPemesanan: tanggal,
+				Status:           status,
+				MetodePembayaran: "", // default
+				Items:            []models.Item{},
+			}
 
-            if metodePembayaran != nil {
-                orderMap[idPemesanan].MetodePembayaran = *metodePembayaran
-            }
-        }
+			if metodePembayaran != nil {
+				orderMap[idPemesanan].MetodePembayaran = *metodePembayaran
+			}
+		}
 
-        item := models.Item{
-            IDMenu:   idMenu,
-            NamaMenu: namaMenu,
-            Jumlah:   jumlah,
-            SubTotal: subTotal,
-        }
+		item := models.Item{
+			IDMenu:   idMenu,
+			NamaMenu: namaMenu,
+			Jumlah:   jumlah,
+			SubTotal: subTotal,
+		}
 
-        orderMap[idPemesanan].Items = append(orderMap[idPemesanan].Items, item)
-    }
+		orderMap[idPemesanan].Items = append(orderMap[idPemesanan].Items, item)
+	}
 
-    var result []models.Order
-    for _, order := range orderMap {
-        result = append(result, *order)
-    }
+	var result []models.Order
+	for _, order := range orderMap {
+		result = append(result, *order)
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(result)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
-
 func GetAllPemesananHandler(w http.ResponseWriter, r *http.Request) {
-    dbConn, err := db.ConnectToDB()
-    if err != nil {
-        http.Error(w, "Gagal konek database", http.StatusInternalServerError)
-        return
-    }
-    defer dbConn.Close()
+	dbConn, err := db.ConnectToDB()
+	if err != nil {
+		http.Error(w, "Gagal konek database", http.StatusInternalServerError)
+		return
+	}
+	defer dbConn.Close()
 
-    query := `
+	query := `
         SELECT 
             p.id_pemesanan, p.id_costumer, p.id_meja, p.total_harga, p.tanggal_pemesanan, p.status,
             d.id_menu, m.nama_menu, d.jumlah, d.sub_total
@@ -773,60 +770,60 @@ func GetAllPemesananHandler(w http.ResponseWriter, r *http.Request) {
         ORDER BY p.id_pemesanan DESC;
     `
 
-    rows, err := dbConn.Query(query)
-    if err != nil {
-        log.Println("Query error:", err)
-        http.Error(w, "Query error", http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	rows, err := dbConn.Query(query)
+	if err != nil {
+		log.Println("Query error:", err)
+		http.Error(w, "Query error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
-    orderMap := make(map[int]*models.Order)
+	orderMap := make(map[int]*models.Order)
 
-    for rows.Next() {
-        var (
-            idPemesanan, idCustomer, idMeja int
-            totalHarga, subTotal           float64
-            tanggal, namaMenu, status      string
-            idMenu, jumlah                 int
-        )
+	for rows.Next() {
+		var (
+			idPemesanan, idCustomer, idMeja int
+			totalHarga, subTotal            float64
+			tanggal, namaMenu, status       string
+			idMenu, jumlah                  int
+		)
 
-        err := rows.Scan(&idPemesanan, &idCustomer, &idMeja, &totalHarga, &tanggal, &status,
-            &idMenu, &namaMenu, &jumlah, &subTotal)
-        if err != nil {
-            log.Println("Scan error:", err)
-            continue
-        }
+		err := rows.Scan(&idPemesanan, &idCustomer, &idMeja, &totalHarga, &tanggal, &status,
+			&idMenu, &namaMenu, &jumlah, &subTotal)
+		if err != nil {
+			log.Println("Scan error:", err)
+			continue
+		}
 
-        if _, exists := orderMap[idPemesanan]; !exists {
-            orderMap[idPemesanan] = &models.Order{
-                IDPemesanan:       idPemesanan,
-                IDCustomer:        idCustomer,
-                IDMeja:            idMeja,
-                TotalHarga:        totalHarga,
-                TanggalPemesanan:  tanggal,
-                Status:            status,
-                Items:             []models.Item{},
-            }
-        }
+		if _, exists := orderMap[idPemesanan]; !exists {
+			orderMap[idPemesanan] = &models.Order{
+				IDPemesanan:      idPemesanan,
+				IDCustomer:       idCustomer,
+				IDMeja:           idMeja,
+				TotalHarga:       totalHarga,
+				TanggalPemesanan: tanggal,
+				Status:           status,
+				Items:            []models.Item{},
+			}
+		}
 
-        item := models.Item{
-            IDMenu:   idMenu,
-            NamaMenu: namaMenu,
-            Jumlah:   jumlah,
-            SubTotal: subTotal,
-        }
+		item := models.Item{
+			IDMenu:   idMenu,
+			NamaMenu: namaMenu,
+			Jumlah:   jumlah,
+			SubTotal: subTotal,
+		}
 
-        orderMap[idPemesanan].Items = append(orderMap[idPemesanan].Items, item)
-    }
+		orderMap[idPemesanan].Items = append(orderMap[idPemesanan].Items, item)
+	}
 
-    var result []models.Order
-    for _, order := range orderMap {
-        result = append(result, *order)
-    }
+	var result []models.Order
+	for _, order := range orderMap {
+		result = append(result, *order)
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(result)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 func UpdateStatusPemesanan(w http.ResponseWriter, r *http.Request) {
@@ -868,11 +865,10 @@ func UpdateStatusPemesanan(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Status berhasil diubah"))
 }
 
-
 const (
-	bucketName  = "kupliqcafe-profile"
-	s3Folder    = "profile/"
-	s3Menu		= "menu/"
+	bucketName = "kupliqcafe-profile"
+	s3Folder   = "profile/"
+	s3Menu     = "menu/"
 )
 
 func UploadFotoProfileHandler(w http.ResponseWriter, r *http.Request) {
@@ -948,7 +944,6 @@ func UploadFotoProfileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Println("DB update success")
 
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
@@ -1023,10 +1018,34 @@ func UploadFotoMenuHandler(w http.ResponseWriter, r *http.Request) {
 		"message": "Foto menu berhasil diupload",
 		"url":     s3URL,
 	})
+
 }
 
+func DeleteReservasiHandler(w http.ResponseWriter, r *http.Request) {
+	database, err := db.ConnectToDB()
+	if err != nil {
+		http.Error(w, "Gagal koneksi ke database", http.StatusInternalServerError)
+		return
+	}
+	defer database.Close()
 
+	vars := mux.Vars(r)
+	idStr := vars["id"]
 
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "ID tidak valid", http.StatusBadRequest)
+		return
+	}
 
+	query := "DELETE FROM reservasi WHERE id_reservasi = $1"
+	_, err = database.Exec(query, id)
+	if err != nil {
+		http.Error(w, "Gagal menghapus reservasi", http.StatusInternalServerError)
+		return
+	}
 
-
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message":"Reservasi berhasil dihapus"}`))
+}

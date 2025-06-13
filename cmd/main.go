@@ -1,12 +1,13 @@
 package main
 
 import (
+	"backend-kupliq/config"
+	"backend-kupliq/internal/api" // Pastikan path impor sesuai dengan folder proyek kamu
 	"log"
 	"net/http"
-	"backend-kupliq/internal/api"  // Pastikan path impor sesuai dengan folder proyek kamu
-	"github.com/rs/cors"
+
 	"github.com/gorilla/mux"
-	"backend-kupliq/config"
+	"github.com/rs/cors"
 )
 
 func main() {
@@ -19,7 +20,6 @@ func main() {
 	r.HandleFunc("/costumer/{id}", api.GetCostumerByIDHandler).Methods("GET")
 	r.HandleFunc("/costumer", api.CreateCostumerHandler).Methods("POST")
 	r.HandleFunc("/costumer/{id}", api.UpdateCostumerHandler).Methods("PUT")
-
 
 	r.HandleFunc("/menu", api.GetMenuHandler).Methods("GET")
 	r.HandleFunc("/menu/{id}", api.GetMenuByIDHandler).Methods("GET")
@@ -38,15 +38,13 @@ func main() {
 
 	r.HandleFunc("/pemesanan/status/{id_pemesanan}", api.UpdateStatusPemesanan).Methods("PUT")
 
-
+	r.HandleFunc("/reservasi/{id}", api.DeleteReservasiHandler).Methods("DELETE")
 
 	r.HandleFunc("/pemesanan/{id_costumer}", api.GetPemesananByCustomerID).Methods("GET")
-
 
 	r.HandleFunc("/login", api.LoginHandler)
 	r.HandleFunc("/upload-foto-profile", api.UploadFotoProfileHandler).Methods("POST")
 	r.HandleFunc("/upload-foto-menu", api.UploadFotoMenuHandler).Methods("POST")
-
 
 	// Menambahkan CORS middleware
 	c := cors.New(cors.Options{
